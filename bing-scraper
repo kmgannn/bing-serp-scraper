@@ -1,0 +1,120 @@
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+
+def setup_driver():
+    """Set up and return a headless Chrome WebDriver."""
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")  # Run browser in background
+    options.add_argument("--lang=en")  # Set browser language to English
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    return driver
+
+def scrape_bing(query, max_results=10):
+    """Scrape Bing search results for the given query."""
+    driver = setup_driver()
+    results = []
+    page = 0
+
+    try:
+        while len(results) < max_results:
+            # Open the Bing search page with English language and Singapore region
+            url = f"https://www.bing.com/search?q={query}&cc=SG&setlang=en&first={page * 10}"
+            driver.get(url)
+
+            # Wait for the results to load
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "ol#b_results"))
+            )
+
+            # Extract the results
+            search_results = driver.find_elements(By.CSS_SELECTOR, "li.b_algo")
+            for result in search_results:
+                try:
+                    title = result.find_element(By.CSS_SELECTOR, "h2").text
+                except:
+                    title = None
+
+                try:
+                    link = result.find_element(By.CSS_SELECTOR, "a").get_attribute('href')
+                except:
+                    link = None
+
+                try:
+                    description = result.find_element(By.CSS_SELECTOR, "p").text
+                except:
+                    description = None
+
+                # Add the result if all fields are present
+                if title and link and description:
+                    results.append({
+                        "Title": title,
+                        "URL": link,
+                        "Description": description
+                    })
+
+                # Stop if we have enough results
+                if len(results) >= max_results:
+                    break
+
+            # Check if there are more pages
+            try:
+                next_page_button = driver.find_elements(By.CSS_SELECTOR, "a.sb_pagN")
+                if not next_page_button:
+                    print("No more pages found.")
+                    break
+
+                # Scroll the "Next Page" button into view
+                driver.execute_script("arguments[0].scrollIntoView(true);", next_page_button[0])
+
+                # Wait for the button to be clickable
+                WebDriverWait(driver, 10).until(EC.element_to_be_clickable(next_page_button[0]))
+
+                # Use JavaScript to click the button (bypasses interactability issues)
+                driver.execute_script("arguments[0].click();", next_page_button[0])
+
+                # Wait for the next page to load
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "ol#b_results"))
+                )
+
+                page += 1
+            except Exception as e:
+                print(f"Error navigating to the next page: {e}")
+                break
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        # Close the WebDriver
+        driver.quit()
+
+    return results
+
+def save_to_csv(results, filename="bing_results.csv"):
+    """Save the results to a CSV file."""
+    if results:
+        df = pd.DataFrame(results)
+        df.to_csv(filename, index=False)
+        print(f"Results saved to {filename}.")
+    else:
+        print("No results to save.")
+
+# Main loop to input queries continuously
+if __name__ == "__main__":
+    while True:
+        query = input("Enter search query (or type 'exit' to stop): ")
+        if query.lower() == 'exit':
+            break
+
+        max_results = int(input("Enter maximum number of results (default 10): ") or 10)
+        results = scrape_bing(query, max_results)
+
+        if results:
+            save_to_csv(results)
+        else:
+            print("No results found.")
